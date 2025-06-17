@@ -1,18 +1,76 @@
 from flask import Flask, request, abort
+from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import InvalidSignatureError
+from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage
+import os
 
 app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
-def health_check():
-    return "OK", 200
+# 環境変数から取得
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("wcSxzxWXXWZmrUbMj8aNHg3OmkkZ78KzE8xdFOvtGmHzzw3PQVNzAr4M5WfAxccfDS8aV1A+PCAWmuTf4JV3zswUL1x6BMSWEUgLkqow6B23N8dV9gdJjJrcZwgGDBx63WeKUb/AAKo13C4Ce8bRHQdB04t89/1O/w1cDnyilFU=")
+LINE_CHANNEL_SECRET = os.getenv("e346aed9410e9dc24ebadbdb3e6d884a")
 
-@app.route("/callback", methods=["POST"])
+line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+user_data = {}
+
+@app.route("/callback", methods=['POST'])
 def callback():
-    # LINEからのリクエストか確認（セキュリティのため）
-    signature = request.headers.get("X-Line-Signature")
+    signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
 
-    # ここに署名検証やイベント処理を書く（後で実装）
-    print("Received body:", body)
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
 
-    return "OK", 200
+    return 'OK'
+
+@handler.add(MessageEvent, message=ImageMessage)
+def handle_image(event):
+    user_id = event.source.user_id
+    message_id = event.message.id
+
+    image_content = line_bot_api.get_message_content(message_id)
+    image_path = f"/tmp/{user_id}_{message_id}.jpg"
+    with open(image_path, 'wb') as f:
+        for chunk in image_content.iter_content():
+            f.write(chunk)
+
+    user_data[user_id] = {'image_path': image_path}
+
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text="処方箋を受け取りました。電話番号を入力してください。")
+    )
+
+@handler.add(MessageEvent, message=TextMessage)
+def handle_text(event):
+    user_id = event.source.user_id
+    text = event.message.text
+
+    if user_id not in user_data:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="まず処方箋の写真を送ってください。")
+        )
+        return
+
+    if 'phone' not in user_data[user_id]:
+        user_data[user_id]['phone'] = text
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="電話番号を確認しました。受け取り希望日時を入力してください（例：6月14日 15時）。")
+        )
+    elif 'pickup_time' not in user_data[user_id]:
+        user_data[user_id]['pickup_time'] = text
+        summary = f"""📄 処方箋情報：
+電話番号：{user_data[user_id]['phone']}
+受け取り時間：{text}
+画像：{user_data[user_id]['image_path']}
+"""
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"ありがとうございます！以下の内容で受付しました：\n{summary}")
+        )
