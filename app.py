@@ -160,7 +160,7 @@ def handle_text(event):
         )
 
         # Windows 印刷コマンド
-        printer_name = "プリンタ名をここに"  # 適切なプリンタ名に変更してください
+        printer_name = "Microsoft Print to PDF"  # 適切なプリンタ名に変更してください
         try:
             subprocess.run([
                 "AcroRd32.exe", "/t", pdf_path, printer_name
