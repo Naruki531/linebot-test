@@ -17,7 +17,7 @@ app = Flask(__name__)
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
-FOLDER_ID = "1XqsqIobVzwYjByX6g_QcNSb4NNI9YfcV"  # ← Google Drive フォルダID
+FOLDER_ID = "1XqsqIobVzwYjByX6g_QcNSb4NNI9YfcV"  # Google Drive フォルダID
 
 if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET or not GOOGLE_CREDENTIALS:
     raise ValueError("必要な環境変数が設定されていません")
@@ -32,7 +32,7 @@ credentials = service_account.Credentials.from_service_account_info(
 )
 drive_service = build('drive', 'v3', credentials=credentials)
 
-# 簡易ステート管理と受付番号カウンタ
+# ユーザーステート管理と受付番号カウンタ
 user_data = {}
 daily_counter = {}
 
@@ -53,18 +53,18 @@ def handle_image(event):
     user_id = event.source.user_id
     message_id = event.message.id
 
-    # 画像を一時保存
-    image_content = line_bot_api.get_message_content(message_id)
-    image_path = f"/tmp/{user_id}_{message_id}.jpg"
-    with open(image_path, 'wb') as f:
-        for chunk in image_content.iter_content():
-            f.write(chunk)
-
-    # 受付番号を生成
+    # 受付番号を生成（今日の日付＋4桁連番）
     today = datetime.datetime.now().strftime("%Y%m%d")
     count = daily_counter.get(today, 0) + 1
     daily_counter[today] = count
     receipt_id = f"{today}{count:04d}"
+
+    # 画像を一時保存（ファイル名に受付番号を使用）
+    image_content = line_bot_api.get_message_content(message_id)
+    image_path = f"/tmp/{receipt_id}.jpg"
+    with open(image_path, 'wb') as f:
+        for chunk in image_content.iter_content():
+            f.write(chunk)
 
     # Google Drive にアップロード
     file_metadata = {
@@ -72,7 +72,7 @@ def handle_image(event):
         'parents': [FOLDER_ID]
     }
     media = MediaFileUpload(image_path, mimetype='image/jpeg')
-    uploaded_file = drive_service.files().create(
+    drive_service.files().create(
         body=file_metadata, media_body=media, fields='id'
     ).execute()
 
