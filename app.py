@@ -1,9 +1,7 @@
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import (
-    MessageEvent, TextMessage, ImageMessage, TextSendMessage
-)
+from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage
 import os
 import json
 import datetime
@@ -36,6 +34,12 @@ drive_service = build('drive', 'v3', credentials=credentials)
 user_data = {}
 daily_counter = {}
 
+def generate_receipt_id():
+    today = datetime.datetime.now().strftime("%Y%m%d")
+    count = daily_counter.get(today, 0) + 1
+    daily_counter[today] = count
+    return f"{today}{count:04d}"
+
 @app.route("/webhook", methods=['POST'])
 def webhook():
     signature = request.headers.get('X-Line-Signature', '')
@@ -53,46 +57,19 @@ def handle_image(event):
     user_id = event.source.user_id
     message_id = event.message.id
 
-    # 受付番号を生成（今日の日付＋4桁連番）
-    today = datetime.datetime.now().strftime("%Y%m%d")
-    count = daily_counter.get(today, 0) + 1
-    daily_counter[today] = count
-    receipt_id = f"{today}{count:04d}"
-
-    # 画像を一時保存（ファイル名に受付番号を使用）
+    receipt_id = generate_receipt_id()
     image_content = line_bot_api.get_message_content(message_id)
     image_path = f"/tmp/{receipt_id}.jpg"
     with open(image_path, 'wb') as f:
         for chunk in image_content.iter_content():
             f.write(chunk)
 
-    # Google Drive にアップロード
-   file_metadata = {
-    'name': f'{user_data[user_id]["reception_id"]}.jpg',
-    'parents': ['1XqsqIobVzwYjByX6g_QcNSb4NNI9YfcV'],
-    'properties': {
-        'phone': user_data[user_id]['phone'],
-        'pickup_time': user_data[user_id]['pickup_time'],
-        'reception_id': user_data[user_id]['reception_id']
-    }
-}
-
-media = MediaFileUpload(user_data[user_id]['image_path'], mimetype='image/jpeg')
-
-uploaded_file = drive_service.files().create(
-    body=file_metadata, media_body=media, fields='id,properties'
-).execute()
-
-file_id = uploaded_file.get('id')
-
-
-    # ユーザーデータに保存
+    # 一時的にデータを保存（後でアップロード）
     user_data[user_id] = {
-        'image_path': image_path,
-        'receipt_id': receipt_id
+        'receipt_id': receipt_id,
+        'image_path': image_path
     }
 
-    # ユーザーに返信
     line_bot_api.reply_message(
         event.reply_token,
         TextSendMessage(text=f"📸 処方箋を受け取りました。\n受付番号：{receipt_id}\n次に電話番号を入力してください。")
@@ -101,7 +78,7 @@ file_id = uploaded_file.get('id')
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     user_id = event.source.user_id
-    text = event.message.text
+    text = event.message.text.strip()
 
     if user_id not in user_data:
         line_bot_api.reply_message(
@@ -121,7 +98,24 @@ def handle_text(event):
     if 'pickup_time' not in user_data[user_id]:
         user_data[user_id]['pickup_time'] = text
 
+        # 受付完了したので、Google Drive にアップロード
         receipt_id = user_data[user_id]['receipt_id']
+        image_path = user_data[user_id]['image_path']
+
+        file_metadata = {
+            'name': f'{receipt_id}.jpg',
+            'parents': [FOLDER_ID],
+            'properties': {
+                'reception_id': receipt_id,
+                'phone': user_data[user_id]['phone'],
+                'pickup_time': user_data[user_id]['pickup_time']
+            }
+        }
+        media = MediaFileUpload(image_path, mimetype='image/jpeg')
+        uploaded_file = drive_service.files().create(
+            body=file_metadata, media_body=media, fields='id'
+        ).execute()
+
         summary = f"""📄 受付内容：
 受付番号：{receipt_id}
 電話番号：{user_data[user_id]['phone']}
@@ -132,3 +126,4 @@ def handle_text(event):
             event.reply_token,
             TextSendMessage(text=f"✅ ありがとうございます！以下の内容で受付しました：\n{summary}")
         )
+
