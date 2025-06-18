@@ -62,6 +62,28 @@ def handle_image(event):
         'image_path': image_path
     }
 
+    # Google Drive 認証設定
+SCOPES = ['https://www.googleapis.com/auth/drive.file']
+SERVICE_ACCOUNT_FILE = 'credentials.json'
+
+credentials = service_account.Credentials.from_service_account_file(
+    SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+drive_service = build('drive', 'v3', credentials=credentials)
+
+# Google Drive にアップロード（特定フォルダに保存）
+file_metadata = {
+    'name': f'{user_id}_{message_id}.jpg',
+    'parents': ['1XqsqIobVzwYjByX6g_QcNSb4NNI9YfcV']  # ← フォルダIDをここに指定
+}
+media = MediaFileUpload(image_path, mimetype='image/jpeg')
+uploaded_file = drive_service.files().create(
+    body=file_metadata, media_body=media, fields='id').execute()
+
+file_id = uploaded_file.get('id')
+user_data[user_id]['drive_file_id'] = file_id
+user_data[user_id]['drive_url'] = f"https://drive.google.com/uc?id={file_id}"
+
+
     line_bot_api.reply_message(
         event.reply_token,
         TextSendMessage(text="📸 処方箋を受け取りました。次に電話番号を入力してください。")
