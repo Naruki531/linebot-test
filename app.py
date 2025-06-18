@@ -40,6 +40,10 @@ drive_service = build('drive', 'v3', credentials=credentials)
 user_data = {}
 daily_counter = {}
 
+# PDF保存フォルダを指定（Windows用）
+PDF_SAVE_DIR = "C:\\print_bot\\処方箋画像"
+os.makedirs(PDF_SAVE_DIR, exist_ok=True)
+
 def generate_receipt_id():
     today = datetime.datetime.now().strftime("%Y%m%d")
     count = daily_counter.get(today, 0) + 1
@@ -70,7 +74,6 @@ def create_pdf_with_info(pdf_path, image_path, receipt_id, phone, pickup_time):
     y = height - 150 - img_height_scaled
 
     c.drawImage(image, x, y, width=img_width_scaled, height=img_height_scaled)
-
     c.showPage()
     c.save()
 
@@ -149,8 +152,8 @@ def handle_text(event):
             body=file_metadata, media_body=media, fields='id'
         ).execute()
 
-        # PDF作成
-        pdf_path = f"/tmp/{receipt_id}.pdf"
+        # PDF作成（Windowsフォルダに保存）
+        pdf_path = os.path.join(PDF_SAVE_DIR, f"{receipt_id}.pdf")
         create_pdf_with_info(
             pdf_path,
             image_path,
@@ -160,7 +163,7 @@ def handle_text(event):
         )
 
         # Windows 印刷コマンド
-        printer_name = "Brother HL-L3230CDW series Printer"  # 適切なプリンタ名に変更してください
+        printer_name = "Brother HL-L3230CDW series Printer"  # ← あなたのプリンタ名に合わせて修正
         try:
             subprocess.run([
                 "AcroRd32.exe", "/t", pdf_path, printer_name
