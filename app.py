@@ -5,6 +5,15 @@ from linebot.models import (
     MessageEvent, TextMessage, ImageMessage, TextSendMessage
 )
 import os
+import json
+from google.oauth2 import service_account
+
+# Renderに登録した環境変数から credentials を取得
+credentials_json = os.getenv("GOOGLE_CREDENTIALS")
+info = json.loads(credentials_json)
+
+credentials = service_account.Credentials.from_service_account_info(info)
+
 
 app = Flask(__name__)
 
