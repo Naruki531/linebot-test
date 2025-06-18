@@ -7,6 +7,8 @@ from linebot.models import (
 import os
 import json
 from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
 # Renderに登録した環境変数から credentials を取得
 credentials_json = os.getenv("GOOGLE_CREDENTIALS")
