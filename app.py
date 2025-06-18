@@ -67,14 +67,24 @@ def handle_image(event):
             f.write(chunk)
 
     # Google Drive にアップロード
-    file_metadata = {
-        'name': f"{receipt_id}.jpg",
-        'parents': [FOLDER_ID]
+   file_metadata = {
+    'name': f'{user_data[user_id]["reception_id"]}.jpg',
+    'parents': ['1XqsqIobVzwYjByX6g_QcNSb4NNI9YfcV'],
+    'properties': {
+        'phone': user_data[user_id]['phone'],
+        'pickup_time': user_data[user_id]['pickup_time'],
+        'reception_id': user_data[user_id]['reception_id']
     }
-    media = MediaFileUpload(image_path, mimetype='image/jpeg')
-    drive_service.files().create(
-        body=file_metadata, media_body=media, fields='id'
-    ).execute()
+}
+
+media = MediaFileUpload(user_data[user_id]['image_path'], mimetype='image/jpeg')
+
+uploaded_file = drive_service.files().create(
+    body=file_metadata, media_body=media, fields='id,properties'
+).execute()
+
+file_id = uploaded_file.get('id')
+
 
     # ユーザーデータに保存
     user_data[user_id] = {
