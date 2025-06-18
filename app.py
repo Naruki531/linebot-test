@@ -10,13 +10,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# Renderに登録した環境変数から credentials を取得
-credentials_json = os.getenv("GOOGLE_CREDENTIALS")
-info = json.loads(credentials_json)
-
-credentials = service_account.Credentials.from_service_account_info(info)
-
-
+# Flaskアプリの初期化
 app = Flask(__name__)
 
 # 環境変数からLINEのAPIキーを取得
@@ -28,6 +22,11 @@ if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET:
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+# Google認証情報を環境変数から取得
+credentials_json = os.getenv("GOOGLE_CREDENTIALS")
+info = json.loads(credentials_json)
+credentials = service_account.Credentials.from_service_account_info(info)
 
 # 簡易ユーザーステート管理（メモリ上）
 user_data = {}
@@ -63,26 +62,21 @@ def handle_image(event):
     }
 
     # Google Drive 認証設定
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
-SERVICE_ACCOUNT_FILE = 'credentials.json'
+    SCOPES = ['https://www.googleapis.com/auth/drive.file']
+    drive_service = build('drive', 'v3', credentials=credentials.with_scopes(SCOPES))
 
-credentials = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-drive_service = build('drive', 'v3', credentials=credentials)
+    # Google Drive にアップロード（特定フォルダに保存）
+    file_metadata = {
+        'name': f'{user_id}_{message_id}.jpg',
+        'parents': ['1XqsqIobVzwYjByX6g_QcNSb4NNI9YfcV']  # フォルダIDを指定
+    }
+    media = MediaFileUpload(image_path, mimetype='image/jpeg')
+    uploaded_file = drive_service.files().create(
+        body=file_metadata, media_body=media, fields='id').execute()
 
-# Google Drive にアップロード（特定フォルダに保存）
-file_metadata = {
-    'name': f'{user_id}_{message_id}.jpg',
-    'parents': ['1XqsqIobVzwYjByX6g_QcNSb4NNI9YfcV']  # ← フォルダIDをここに指定
-}
-media = MediaFileUpload(image_path, mimetype='image/jpeg')
-uploaded_file = drive_service.files().create(
-    body=file_metadata, media_body=media, fields='id').execute()
-
-file_id = uploaded_file.get('id')
-user_data[user_id]['drive_file_id'] = file_id
-user_data[user_id]['drive_url'] = f"https://drive.google.com/uc?id={file_id}"
-
+    file_id = uploaded_file.get('id')
+    user_data[user_id]['drive_file_id'] = file_id
+    user_data[user_id]['drive_url'] = f"https://drive.google.com/uc?id={file_id}"
 
     line_bot_api.reply_message(
         event.reply_token,
@@ -119,7 +113,7 @@ def handle_text(event):
         summary = f"""📄 受付内容：
 電話番号：{user_data[user_id]['phone']}
 受け取り日時：{user_data[user_id]['pickup_time']}
-画像ファイル：{user_data[user_id]['image_path']}
+画像ファイル：{user_data[user_id]['drive_url']}
 """
 
         line_bot_api.reply_message(
