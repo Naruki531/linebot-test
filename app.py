@@ -163,7 +163,7 @@ def handle_text(event):
         )
 
         # Windows 印刷コマンド
-        printer_name = "Brother HL-L3230CDW series Printer"  # ← あなたのプリンタ名に合わせて修正
+        printer_name = "RICOH SG 3200 RPCS-R調剤"  # ← あなたのプリンタ名に合わせて修正
         try:
             subprocess.run([
                 "AcroRd32.exe", "/t", pdf_path, printer_name
