@@ -1,7 +1,7 @@
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage
+from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage, FollowEvent, ImageSendMessage
 import os
 import json
 import datetime
@@ -54,13 +54,11 @@ def create_pdf_with_info(pdf_path, image_path, receipt_id, phone, pickup_time):
     c = canvas.Canvas(pdf_path, pagesize=A4)
     width, height = A4
 
-    # 上部に受付情報テキストを描画
     c.setFont("Helvetica", 12)
     c.drawString(50, height - 50, f"受付番号: {receipt_id}")
     c.drawString(50, height - 70, f"電話番号: {phone}")
     c.drawString(50, height - 90, f"受け取り日時: {pickup_time}")
 
-    # 画像の読み込みと配置
     image = ImageReader(image_path)
     max_width = width - 100
     max_height = height - 150
@@ -89,6 +87,15 @@ def webhook():
 
     return 'OK'
 
+@handler.add(FollowEvent)
+def handle_follow(event):
+    user_id = event.source.user_id
+    user_data[user_id] = {}
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text="このLINEでは処方箋の受付を行っています。\n個人情報は印刷および管理のために使用されます。\n同意される方は『同意』と返信してください。")
+    )
+
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image(event):
     user_id = event.source.user_id
@@ -103,7 +110,8 @@ def handle_image(event):
 
     user_data[user_id] = {
         'receipt_id': receipt_id,
-        'image_path': image_path
+        'image_path': image_path,
+        'consent': True  # 画像を送った時点で同意済みとみなす（または必要に応じてチェック）
     }
 
     line_bot_api.reply_message(
@@ -117,10 +125,24 @@ def handle_text(event):
     text = event.message.text.strip()
 
     if user_id not in user_data:
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text="まず処方箋の写真を送信してください。")
-        )
+        user_data[user_id] = {}
+
+    if 'consent' not in user_data[user_id]:
+        if text.lower() in ['同意', 'はい', 'ok', '了解']:
+            user_data[user_id]['consent'] = True
+            image_msg = ImageSendMessage(
+                original_content_url="https://drive.google.com/uc?id=1gXkCnQHz9S7Dwiu0g-3VlvBGvACTiiwa",
+                preview_image_url="https://drive.google.com/uc?id=1gXkCnQHz9S7Dwiu0g-3VlvBGvACTiiwa"
+            )
+            line_bot_api.reply_message(event.reply_token, [
+                TextSendMessage(text="✅ ご同意ありがとうございます。\n処方箋の受付方法は以下の画像をご覧ください："),
+                image_msg
+            ])
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="ご利用には同意が必要です。「同意」と送信してください。")
+            )
         return
 
     if 'phone' not in user_data[user_id]:
@@ -137,7 +159,6 @@ def handle_text(event):
         receipt_id = user_data[user_id]['receipt_id']
         image_path = user_data[user_id]['image_path']
 
-        # Google Driveアップロード
         file_metadata = {
             'name': f'{receipt_id}.jpg',
             'parents': [FOLDER_ID],
@@ -152,7 +173,6 @@ def handle_text(event):
             body=file_metadata, media_body=media, fields='id'
         ).execute()
 
-        # PDF作成（Windowsフォルダに保存）
         pdf_path = os.path.join(PDF_SAVE_DIR, f"{receipt_id}.pdf")
         create_pdf_with_info(
             pdf_path,
@@ -162,7 +182,6 @@ def handle_text(event):
             user_data[user_id]['pickup_time']
         )
 
-        # Windows 印刷コマンド
         printer_name = "RICOH SG 3200 RPCS-R調剤"  # ← あなたのプリンタ名に合わせて修正
         try:
             subprocess.run([
