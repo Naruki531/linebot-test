@@ -93,7 +93,7 @@ def handle_follow(event):
     user_data[user_id] = {}
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text="このLINEでは処方箋の受付を行っています。\n個人情報は印刷および管理のために使用されます。\n同意される方は『同意』と返信してください。")
+        TextSendMessage(text="いずみ薬局　テスト店では、LINEにて処方箋の受付を行っています。\n個人情報は印刷および管理のために使用されます。\n同意される方は『同意』と返信してください。\n弊社プライバシーポリシー\nhttp://izumi-group.com/privacy/")
     )
 
 @handler.add(MessageEvent, message=ImageMessage)
