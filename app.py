@@ -93,7 +93,7 @@ def handle_follow(event):
     user_data[user_id] = {}
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text="いずみ薬局　テスト店では、LINEにて処方箋の受付を行っています。\n個人情報は印刷および管理のために使用されます。\n同意される方は『同意』と返信してください。\n弊社プライバシーポリシー\nhttp://izumi-group.com/privacy/")
+        TextSendMessage(text="いずみ薬局 テスト店では、LINEにて処方箋の受付を行っています。\n個人情報は印刷および管理のために使用されます。\n同意される方は『同意』と返信してください。\n弊社プライバシーポリシー\nhttp://izumi-group.com/privacy/")
     )
 
 @handler.add(MessageEvent, message=ImageMessage)
@@ -101,22 +101,25 @@ def handle_image(event):
     user_id = event.source.user_id
     message_id = event.message.id
 
-    receipt_id = generate_receipt_id()
+    receipt_id = user_data.get(user_id, {}).get("receipt_id") or generate_receipt_id()
     image_content = line_bot_api.get_message_content(message_id)
-    image_path = f"/tmp/{receipt_id}.jpg"
+    image_list = user_data.get(user_id, {}).get("images", [])
+    image_path = f"/tmp/{receipt_id}_{len(image_list) + 1}.jpg"
+
     with open(image_path, 'wb') as f:
         for chunk in image_content.iter_content():
             f.write(chunk)
 
-    user_data[user_id] = {
-        'receipt_id': receipt_id,
-        'image_path': image_path,
-        'consent': True  # 画像を送った時点で同意済みとみなす（または必要に応じてチェック）
-    }
+    if user_id not in user_data:
+        user_data[user_id] = {}
+
+    user_data[user_id]["receipt_id"] = receipt_id
+    user_data[user_id].setdefault("images", []).append(image_path)
+    user_data[user_id]["consent"] = True  # 必要に応じて調整
 
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text=f"📸 処方箋を受け取りました。\n受付番号：{receipt_id}\n次に電話番号を入力してください。")
+        TextSendMessage(text=f"📸 処方箋画像を受け取りました。\n画像が複数ある場合は続けて送ってください。\nすべて送信したら、電話番号を入力してください。")
     )
 
 @handler.add(MessageEvent, message=TextMessage)
@@ -157,49 +160,45 @@ def handle_text(event):
         user_data[user_id]['pickup_time'] = text
 
         receipt_id = user_data[user_id]['receipt_id']
-        image_path = user_data[user_id]['image_path']
+        phone = user_data[user_id]['phone']
+        pickup_time = user_data[user_id]['pickup_time']
+        images = user_data[user_id].get("images", [])
 
-        file_metadata = {
-            'name': f'{receipt_id}.jpg',
-            'parents': [FOLDER_ID],
-            'properties': {
-                'reception_id': receipt_id,
-                'phone': user_data[user_id]['phone'],
-                'pickup_time': user_data[user_id]['pickup_time']
+        for idx, image_path in enumerate(images):
+            file_metadata = {
+                'name': f'{receipt_id}_{idx + 1}.jpg',
+                'parents': [FOLDER_ID],
+                'properties': {
+                    'reception_id': receipt_id,
+                    'phone': phone,
+                    'pickup_time': pickup_time
+                }
             }
-        }
-        media = MediaFileUpload(image_path, mimetype='image/jpeg')
-        drive_service.files().create(
-            body=file_metadata, media_body=media, fields='id'
-        ).execute()
+            media = MediaFileUpload(image_path, mimetype='image/jpeg')
+            drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
 
-        pdf_path = os.path.join(PDF_SAVE_DIR, f"{receipt_id}.pdf")
-        create_pdf_with_info(
-            pdf_path,
-            image_path,
-            receipt_id,
-            user_data[user_id]['phone'],
-            user_data[user_id]['pickup_time']
-        )
+            pdf_path = os.path.join(PDF_SAVE_DIR, f"{receipt_id}_{idx + 1}.pdf")
+            create_pdf_with_info(pdf_path, image_path, receipt_id, phone, pickup_time)
 
-        printer_name = "RICOH SG 3200 RPCS-R調剤"  # ← あなたのプリンタ名に合わせて修正
-        try:
-            subprocess.run([
-                "AcroRd32.exe", "/t", pdf_path, printer_name
-            ], check=True)
-        except Exception as e:
-            print(f"印刷エラー: {e}")
+            printer_name = "RICOH SG 3200 RPCS-R調剤"  # ← 適宜変更
+            try:
+                subprocess.run(["AcroRd32.exe", "/t", pdf_path, printer_name], check=True)
+            except Exception as e:
+                print(f"印刷エラー: {e}")
 
         summary = f"""📄 受付内容：
 受付番号：{receipt_id}
-電話番号：{user_data[user_id]['phone']}
-受け取り日時：{user_data[user_id]['pickup_time']}
+画像枚数：{len(images)}枚
+電話番号：{phone}
+受け取り日時：{pickup_time}
 """
-
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text=f"✅ ありがとうございます！以下の内容で受付しました：\n{summary}")
         )
+
+        # 終了後にデータ削除（再受付に備えて）
+        del user_data[user_id]
 
 if __name__ == "__main__":
     app.run(debug=True)
