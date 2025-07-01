@@ -1,71 +1,39 @@
+import os
+import time
+import json
+import requests
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import (
-    MessageEvent, TextMessage, ImageMessage,
-    TextSendMessage, FollowEvent, ImageSendMessage
-)
-import os
-import datetime
-import subprocess
+from linebot.models import MessageEvent, TextMessage
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.utils import ImageReader
+from PIL import Image
+import subprocess
+
+# 環境変数または直接記述
+CHANNEL_ACCESS_TOKEN = 'LINE_CHANNEL_ACCESS_TOKEN'
+CHANNEL_SECRET = 'LINE_CHANNEL_SECRET'
+
+line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(CHANNEL_SECRET)
+
+# 保存先フォルダとPDF出力先
+SAVE_FOLDER = r'C:\print_bot\処方箋画像'
+PDF_PATH = os.path.join(SAVE_FOLDER, 'output.pdf')
+SUMATRA_PATH = r'C:\Users\gwincl3\AppData\Local\SumatraPDF\SumatraPDF.exe'
+PRINTER_NAME = 'RICOH SG 3200 RPCS-R調剤'
+
+# フォルダ作成
+os.makedirs(SAVE_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
 
-# 環境変数の読み込み
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
-
-if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET:
-    raise ValueError("必要な環境変数が設定されていません")
-
-line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(LINE_CHANNEL_SECRET)
-
-# ユーザーステート管理と受付番号カウンタ
+# ユーザーごとの状態保持
 user_data = {}
-daily_counter = {}
-
-# PDF保存先ディレクトリ（ローカルPC）
-PDF_SAVE_DIR = "C:\\print_bot\\処方箋画像"
-os.makedirs(PDF_SAVE_DIR, exist_ok=True)
-
-def generate_receipt_id():
-    today = datetime.datetime.now().strftime("%Y%m%d")
-    count = daily_counter.get(today, 0) + 1
-    daily_counter[today] = count
-    return f"{today}{count:04d}"
-
-def create_pdf_with_info(pdf_path, image_path, receipt_id, phone, pickup_time):
-    c = canvas.Canvas(pdf_path, pagesize=A4)
-    width, height = A4
-
-    c.setFont("Helvetica", 12)
-    c.drawString(50, height - 50, f"受付番号: {receipt_id}")
-    c.drawString(50, height - 70, f"電話番号: {phone}")
-    c.drawString(50, height - 90, f"受け取り日時: {pickup_time}")
-
-    image = ImageReader(image_path)
-    max_width = width - 100
-    max_height = height - 150
-
-    img_width, img_height = image.getSize()
-    scale = min(max_width / img_width, max_height / img_height)
-    img_width_scaled = img_width * scale
-    img_height_scaled = img_height * scale
-
-    x = (width - img_width_scaled) / 2
-    y = height - 150 - img_height_scaled
-
-    c.drawImage(image, x, y, width=img_width_scaled, height=img_height_scaled)
-    c.showPage()
-    c.save()
 
 @app.route("/webhook", methods=['POST'])
 def webhook():
-    signature = request.headers.get('X-Line-Signature', '')
+    signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
 
     try:
@@ -75,103 +43,110 @@ def webhook():
 
     return 'OK'
 
-@handler.add(FollowEvent)
-def handle_follow(event):
-    user_id = event.source.user_id
-    user_data[user_id] = {}
-    line_bot_api.reply_message(
-        event.reply_token,
-        TextSendMessage(text="いずみ薬局 テスト店では、LINEにて処方箋の受付を行っています。\n個人情報は印刷および管理のために使用されます。\n同意される方は『同意』と返信してください。\n弊社プライバシーポリシー\nhttp://izumi-group.com/privacy/")
-    )
-
-@handler.add(MessageEvent, message=ImageMessage)
-def handle_image(event):
-    user_id = event.source.user_id
-    message_id = event.message.id
-
-    receipt_id = user_data.get(user_id, {}).get("receipt_id") or generate_receipt_id()
-    image_content = line_bot_api.get_message_content(message_id)
-    image_list = user_data.get(user_id, {}).get("images", [])
-    image_path = f"/tmp/{receipt_id}_{len(image_list) + 1}.jpg"
-
-    with open(image_path, 'wb') as f:
-        for chunk in image_content.iter_content():
-            f.write(chunk)
-
-    if user_id not in user_data:
-        user_data[user_id] = {}
-
-    user_data[user_id]["receipt_id"] = receipt_id
-    user_data[user_id].setdefault("images", []).append(image_path)
-    user_data[user_id]["consent"] = True  # 必要に応じて調整
-
-    line_bot_api.reply_message(
-        event.reply_token,
-        TextSendMessage(text=f"📸 処方箋画像を受け取りました。\n画像が複数ある場合は続けて送ってください。\nすべて送信したら、電話番号を入力してください。")
-    )
-
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
 
-    if user_id not in user_data:
-        user_data[user_id] = {}
-
-    if 'consent' not in user_data[user_id]:
-        if text.lower() in ['同意', 'はい', 'ok', '了解']:
-            user_data[user_id]['consent'] = True
-            image_msg = ImageSendMessage(
-                original_content_url="https://drive.google.com/uc?id=1gXkCnQHz9S7Dwiu0g-3VlvBGvACTiiwa",
-                preview_image_url="https://drive.google.com/uc?id=1gXkCnQHz9S7Dwiu0g-3VlvBGvACTiiwa"
-            )
-            line_bot_api.reply_message(event.reply_token, [
-                TextSendMessage(text="✅ ご同意ありがとうございます。\n処方箋の受付方法は以下の画像をご覧ください："),
-                image_msg
-            ])
-        else:
+    if text == '印刷':
+        if user_id not in user_data or not user_data[user_id]['images']:
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="ご利用には同意が必要です。「同意」と送信してください。")
+                TextSendMessage(text='画像が登録されていません。先に画像を送ってください。')
             )
-        return
+            return
 
-    if 'phone' not in user_data[user_id]:
-        user_data[user_id]['phone'] = text
+        images = user_data[user_id]['images']
+        pdf_path = PDF_PATH
+
+        # PDF作成
+        create_pdf(images, pdf_path)
+
+        # SumatraPDFで印刷
+        try:
+            cmd = [
+                SUMATRA_PATH,
+                "-print-to", PRINTER_NAME,
+                pdf_path
+            ]
+            subprocess.run(cmd, check=True)
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text='印刷しました。')
+            )
+        except Exception as e:
+            print(f"印刷エラー: {e}")
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text='印刷中にエラーが発生しました。')
+            )
+
+        # 状態リセット
+        del user_data[user_id]
+
+    elif text == 'キャンセル':
+        if user_id in user_data:
+            del user_data[user_id]
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="📞 電話番号を確認しました。\n次に受け取り希望日時を入力してください（例：6月14日 15時）。")
+            TextSendMessage(text='キャンセルしました。')
         )
-        return
 
-    if 'pickup_time' not in user_data[user_id]:
-        user_data[user_id]['pickup_time'] = text
-
-        receipt_id = user_data[user_id]['receipt_id']
-        phone = user_data[user_id]['phone']
-        pickup_time = user_data[user_id]['pickup_time']
-        images = user_data[user_id].get("images", [])
-
-        for idx, image_path in enumerate(images):
-            pdf_path = os.path.join(PDF_SAVE_DIR, f"{receipt_id}_{idx + 1}.pdf")
-            create_pdf_with_info(pdf_path, image_path, receipt_id, phone, pickup_time)
-
-            printer_name = "RICOH SG 3200 RPCS-R調剤"  # ← 実際のプリンタ名に応じて調整
-            try:
-                subprocess.run(["AcroRd32.exe", "/t", pdf_path, printer_name], check=True)
-            except Exception as e:
-                print(f"印刷エラー: {e}")
-
-        summary = f"""📄 受付内容：
-受付番号：{receipt_id}
-画像枚数：{len(images)}枚
-電話番号：{phone}
-受け取り日時：{pickup_time}
-"""
+    else:
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=f"✅ ありがとうございます！以下の内容で受付しました：\n{summary}")
+            TextSendMessage(text='画像を送信後「印刷」と入力してください。キャンセルする場合は「キャンセル」と入力してください。')
         )
 
-        # 後処理（次回の受付のためデータ削除）
-        del use
+@handler.add(MessageEvent, message=TextMessage)
+def handle_image(event):
+    if event.message.type != 'image':
+        return
+
+    user_id = event.source.user_id
+    message_id = event.message.id
+
+    # 保存先ファイル名
+    timestamp = int(time.time())
+    file_path = os.path.join(SAVE_FOLDER, f'{user_id}_{timestamp}.jpg')
+
+    # LINE画像取得
+    content = line_bot_api.get_message_content(message_id)
+    with open(file_path, 'wb') as f:
+        for chunk in content.iter_content():
+            f.write(chunk)
+
+    # ユーザーデータに追加
+    if user_id not in user_data:
+        user_data[user_id] = {'images': []}
+    user_data[user_id]['images'].append(file_path)
+
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text='画像を受け取りました。印刷するには「印刷」と入力してください。')
+    )
+
+def create_pdf(image_paths, pdf_path):
+    c = canvas.Canvas(pdf_path)
+
+    for img_path in image_paths:
+        img = Image.open(img_path)
+        img_width, img_height = img.size
+
+        # A4 サイズ
+        a4_width = 595
+        a4_height = 842
+
+        scale = min(a4_width / img_width, a4_height / img_height)
+        new_width = img_width * scale
+        new_height = img_height * scale
+        x = (a4_width - new_width) / 2
+        y = (a4_height - new_height) / 2
+
+        c.drawImage(img_path, x, y, width=new_width, height=new_height)
+        c.showPage()
+
+    c.save()
+
+if __name__ == "__main__":
+    app.run(debug=True)
