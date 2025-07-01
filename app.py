@@ -1,18 +1,17 @@
 import os
 import time
-import json
 import requests
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage
+from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage
 from reportlab.pdfgen import canvas
 from PIL import Image
 import subprocess
 
 # 環境変数または直接記述
-CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
-CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
+CHANNEL_ACCESS_TOKEN = 'LINE_CHANNEL_ACCESS_TOKEN'
+CHANNEL_SECRET = 'LINE_CHANNEL_SECRET'
 
 line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
@@ -98,11 +97,9 @@ def handle_text(event):
             TextSendMessage(text='画像を送信後「印刷」と入力してください。キャンセルする場合は「キャンセル」と入力してください。')
         )
 
-@handler.add(MessageEvent, message=TextMessage)
+# ✅ ImageMessage に変更
+@handler.add(MessageEvent, message=ImageMessage)
 def handle_image(event):
-    if event.message.type != 'image':
-        return
-
     user_id = event.source.user_id
     message_id = event.message.id
 
