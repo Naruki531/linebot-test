@@ -1,44 +1,34 @@
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage, FollowEvent, ImageSendMessage
+from linebot.models import (
+    MessageEvent, TextMessage, ImageMessage,
+    TextSendMessage, FollowEvent, ImageSendMessage
+)
 import os
-import json
 import datetime
 import subprocess
-
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 
 app = Flask(__name__)
 
-# 環境変数
+# 環境変数の読み込み
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
-GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")  # JSON文字列
-FOLDER_ID = "1XqsqIobVzwYjByX6g_QcNSb4NNI9YfcV"  # 共有ドライブ内のフォルダID
 
-if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET or not GOOGLE_CREDENTIALS:
+if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET:
     raise ValueError("必要な環境変数が設定されていません")
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# Google Drive 認証
-credentials_info = json.loads(GOOGLE_CREDENTIALS)
-credentials = service_account.Credentials.from_service_account_info(
-    credentials_info, scopes=['https://www.googleapis.com/auth/drive']
-)
-drive_service = build('drive', 'v3', credentials=credentials)
-
+# ユーザーステート管理と受付番号カウンタ
 user_data = {}
 daily_counter = {}
 
+# PDF保存先ディレクトリ（ローカルPC）
 PDF_SAVE_DIR = "C:\\print_bot\\処方箋画像"
 os.makedirs(PDF_SAVE_DIR, exist_ok=True)
 
@@ -51,6 +41,7 @@ def generate_receipt_id():
 def create_pdf_with_info(pdf_path, image_path, receipt_id, phone, pickup_time):
     c = canvas.Canvas(pdf_path, pagesize=A4)
     width, height = A4
+
     c.setFont("Helvetica", 12)
     c.drawString(50, height - 50, f"受付番号: {receipt_id}")
     c.drawString(50, height - 70, f"電話番号: {phone}")
@@ -59,12 +50,15 @@ def create_pdf_with_info(pdf_path, image_path, receipt_id, phone, pickup_time):
     image = ImageReader(image_path)
     max_width = width - 100
     max_height = height - 150
+
     img_width, img_height = image.getSize()
     scale = min(max_width / img_width, max_height / img_height)
     img_width_scaled = img_width * scale
     img_height_scaled = img_height * scale
+
     x = (width - img_width_scaled) / 2
     y = height - 150 - img_height_scaled
+
     c.drawImage(image, x, y, width=img_width_scaled, height=img_height_scaled)
     c.showPage()
     c.save()
@@ -73,10 +67,12 @@ def create_pdf_with_info(pdf_path, image_path, receipt_id, phone, pickup_time):
 def webhook():
     signature = request.headers.get('X-Line-Signature', '')
     body = request.get_data(as_text=True)
+
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
+
     return 'OK'
 
 @handler.add(FollowEvent)
@@ -92,10 +88,11 @@ def handle_follow(event):
 def handle_image(event):
     user_id = event.source.user_id
     message_id = event.message.id
+
     receipt_id = user_data.get(user_id, {}).get("receipt_id") or generate_receipt_id()
+    image_content = line_bot_api.get_message_content(message_id)
     image_list = user_data.get(user_id, {}).get("images", [])
     image_path = f"/tmp/{receipt_id}_{len(image_list) + 1}.jpg"
-    image_content = line_bot_api.get_message_content(message_id)
 
     with open(image_path, 'wb') as f:
         for chunk in image_content.iter_content():
@@ -106,11 +103,11 @@ def handle_image(event):
 
     user_data[user_id]["receipt_id"] = receipt_id
     user_data[user_id].setdefault("images", []).append(image_path)
-    user_data[user_id]["consent"] = True
+    user_data[user_id]["consent"] = True  # 必要に応じて調整
 
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text="📸 処方箋画像を受け取りました。画像が複数ある場合は続けて送ってください。\nすべて送信したら、電話番号を入力してください。")
+        TextSendMessage(text=f"📸 処方箋画像を受け取りました。\n画像が複数ある場合は続けて送ってください。\nすべて送信したら、電話番号を入力してください。")
     )
 
 @handler.add(MessageEvent, message=TextMessage)
@@ -143,39 +140,23 @@ def handle_text(event):
         user_data[user_id]['phone'] = text
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="📞 電話番号を確認しました。\n次に受け取り希望日時を入力してください（例：7月5日 14時）。")
+            TextSendMessage(text="📞 電話番号を確認しました。\n次に受け取り希望日時を入力してください（例：6月14日 15時）。")
         )
         return
 
     if 'pickup_time' not in user_data[user_id]:
         user_data[user_id]['pickup_time'] = text
+
         receipt_id = user_data[user_id]['receipt_id']
         phone = user_data[user_id]['phone']
         pickup_time = user_data[user_id]['pickup_time']
         images = user_data[user_id].get("images", [])
 
         for idx, image_path in enumerate(images):
-            file_metadata = {
-                'name': f'{receipt_id}_{idx + 1}.jpg',
-                'parents': [FOLDER_ID],
-                'properties': {
-                    'reception_id': receipt_id,
-                    'phone': phone,
-                    'pickup_time': pickup_time
-                }
-            }
-            media = MediaFileUpload(image_path, mimetype='image/jpeg')
-            drive_service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id',
-                supportsAllDrives=True
-            ).execute()
-
             pdf_path = os.path.join(PDF_SAVE_DIR, f"{receipt_id}_{idx + 1}.pdf")
             create_pdf_with_info(pdf_path, image_path, receipt_id, phone, pickup_time)
 
-            printer_name = "RICOH SG 3200 RPCS-R調剤"
+            printer_name = "RICOH SG 3200 RPCS-R調剤"  # ← 実際のプリンタ名に応じて調整
             try:
                 subprocess.run(["AcroRd32.exe", "/t", pdf_path, printer_name], check=True)
             except Exception as e:
@@ -191,7 +172,6 @@ def handle_text(event):
             event.reply_token,
             TextSendMessage(text=f"✅ ありがとうございます！以下の内容で受付しました：\n{summary}")
         )
-        del user_data[user_id]
 
-if __name__ == "__main__":
-    app.run(debug=True)
+        # 後処理（次回の受付のためデータ削除）
+        del use
