@@ -159,7 +159,12 @@ def handle_text(event):
                 }
             }
             media = MediaFileUpload(image_path, mimetype='image/jpeg')
-            drive_service.files().create(body=file_metadata, media_body=media).execute()
+            drive_service.files().create(
+    body=file_metadata,
+    media_body=media,
+    supportsAllDrives=True
+).execute()
+
 
         # LINE返信
         summary = f"""📄 受付内容：
