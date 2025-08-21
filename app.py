@@ -19,7 +19,7 @@ app = Flask(__name__)
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
-FOLDER_ID = "1XqsqIobVzwYjByX6g_QcNSb4NNI9YfcV"  # 共有ドライブ内のフォルダID
+FOLDER_ID = "0AIn_LcM3FkZWUk9PVA"  # 共有ドライブ内のフォルダID
 
 if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET or not GOOGLE_CREDENTIALS:
     raise ValueError("必要な環境変数が設定されていません")
