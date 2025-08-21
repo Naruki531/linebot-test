@@ -19,7 +19,7 @@ app = Flask(__name__)
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
-FOLDER_ID = "1XqsqIobVzwYjByX6g_QcNSb4NNI9YfcV"  # Google Drive フォルダID
+FOLDER_ID = "1XqsqIobVzwYjByX6g_QcNSb4NNI9YfcV"  # 共有ドライブ内のフォルダID
 
 if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET or not GOOGLE_CREDENTIALS:
     raise ValueError("必要な環境変数が設定されていません")
@@ -147,11 +147,11 @@ def handle_text(event):
         pickup_time = user_data[user_id]['pickup_time']
         images = user_data[user_id].get("images", [])
 
-        # Google Drive に保存
+        # Google Drive に保存（Shared Drive対応）
         for idx, image_path in enumerate(images):
             file_metadata = {
                 'name': f'{receipt_id}_{idx + 1}.jpg',
-                'parents': [FOLDER_ID],
+                'parents': [FOLDER_ID],  # 共有ドライブ内フォルダID
                 'properties': {
                     'reception_id': receipt_id,
                     'phone': phone,
@@ -160,11 +160,10 @@ def handle_text(event):
             }
             media = MediaFileUpload(image_path, mimetype='image/jpeg')
             drive_service.files().create(
-    body=file_metadata,
-    media_body=media,
-    supportsAllDrives=True
-).execute()
-
+                body=file_metadata,
+                media_body=media,
+                supportsAllDrives=True  # これを追加
+            ).execute()
 
         # LINE返信
         summary = f"""📄 受付内容：
